@@ -457,6 +457,7 @@ let LOADING = true;
 let AUTH_ROLE = localStorage.getItem('simpeg_role') || null;
 let AUTH_BIDANG = localStorage.getItem('simpeg_bidang') || null;
 let BIDANG_PASSWORDS = {};
+let HOLIDAYS = {}; // { 'YYYY-MM-DD': 'keterangan' }
 const USER_ALLOWED_TABS = ['dashboard','kehadiran'];
 function visibleTabs(){ return AUTH_ROLE==='user' ? TABS.filter(t=>USER_ALLOWED_TABS.indexOf(t.id)>=0) : TABS; }
 
@@ -562,10 +563,11 @@ async function importPegawaiBulkRemote(employees){
 }
 
 async function loadAll(){
-  const [emp, set, bidangPass] = await Promise.all([ fetchPegawaiList(), storageGet('pengaturan:info'), storageGet('pengaturan:bidangpass') ]);
+  const [emp, set, bidangPass, libur] = await Promise.all([ fetchPegawaiList(), storageGet('pengaturan:info'), storageGet('pengaturan:bidangpass'), storageGet('pengaturan:harilibur') ]);
   EMPLOYEES = emp || [];
   if(set) SETTINGS = Object.assign(SETTINGS, JSON.parse(set));
   BIDANG_PASSWORDS = bidangPass ? JSON.parse(bidangPass) : {};
+  HOLIDAYS = libur ? JSON.parse(libur) : {};
   await ensureAttendanceLoaded(todayStr());
   LOADING = false;
 }
@@ -1274,6 +1276,9 @@ async function renderKehadiranTab(){
         <div class="today-chip">${formatIndoDate(KEHADIRAN_DATE)}</div>
       </div>
     </div>
+    ${isLiburNasional(KEHADIRAN_DATE) ? `<div class="card" style="background:var(--amber-pale);border-color:#F2C230;margin-bottom:16px;">
+      <b style="color:#96691E;">&#128197; Hari Libur:</b> <span style="color:#96691E;">${escapeHtml(HOLIDAYS[KEHADIRAN_DATE])}</span> &mdash; tanggal ini tidak akan dihitung sebagai hari kerja di Disiplin Pegawai &amp; Laporan Kepala Dinas.
+    </div>` : ''}
     <div class="card">
       <div class="toolbar">
         <input type="search" placeholder="Cari nama / NIP..." oninput="KEHADIRAN_FILTER.search=this.value; renderKehadiranWrap();">
@@ -1596,15 +1601,17 @@ async function renderRiwayatTab(){
 
 /* ================= DISIPLIN PEGAWAI ================= */
 function isWeekday(dateStr){ const d = parseDateStr(dateStr).getDay(); return d!==0 && d!==6; }
+function isLiburNasional(dateStr){ return !!HOLIDAYS[dateStr]; }
+function isHariKerja(dateStr){ return isWeekday(dateStr) && !isLiburNasional(dateStr); }
 async function loadMonthDates(month){
   const keys = await storageList('kehadiran:'+month);
-  const dates = keys.map(k=>k.replace('kehadiran:','')).filter(isWeekday).sort();
+  const dates = keys.map(k=>k.replace('kehadiran:','')).filter(isHariKerja).sort();
   for(const d of dates){ await ensureAttendanceLoaded(d); }
   return dates;
 }
 async function loadDatesInRange(startDate, endDate){
   const keys = await storageList('kehadiran:');
-  const dates = keys.map(k=>k.replace('kehadiran:','')).filter(d=> d>=startDate && d<=endDate).filter(isWeekday).sort();
+  const dates = keys.map(k=>k.replace('kehadiran:','')).filter(d=> d>=startDate && d<=endDate).filter(isHariKerja).sort();
   for(const d of dates){ await ensureAttendanceLoaded(d); }
   return dates;
 }
@@ -1658,7 +1665,7 @@ async function renderDisiplinTab(){
   const c = document.getElementById('tab-content');
   c.innerHTML = `
     <div class="topbar">
-      <div><h1>Disiplin Pegawai</h1><div class="sub">Rekap kehadiran: Terlambat, Izin Terlambat, Izin Tidak Masuk &amp; Tanpa Keterangan dihitung sebagai <b>tidak mengikuti apel pagi</b>.</div></div>
+      <div><h1>Disiplin Pegawai</h1><div class="sub">Rekap kehadiran: Terlambat, Izin Terlambat, Izin Tidak Masuk &amp; Tanpa Keterangan dihitung sebagai <b>tidak mengikuti apel pagi</b>. Sabtu, Minggu &amp; hari libur nasional tidak dihitung.</div></div>
     </div>
     <div class="card" style="margin-bottom:16px;">
       <div class="toolbar">
@@ -2463,7 +2470,7 @@ async function renderLaporanTab(){
           <input type="date" value="${KADIS_END}" onchange="KADIS_END=this.value; renderLaporanTab();">
         `}
       </div>
-      <p class="muted" style="font-size:12px;margin:0;">Hari Sabtu &amp; Minggu tidak dihitung dalam rekap ini.</p>
+      <p class="muted" style="font-size:12px;margin:0;">Hari Sabtu, Minggu, dan hari libur nasional tidak dihitung dalam rekap ini.</p>
     </div>
     <div class="card">
       <div class="section-title">&#128196; Laporan PDF untuk Kepala Dinas</div>
@@ -2739,7 +2746,7 @@ async function renderKadisReportPreview(){
         ${SETTINGS.logoDataUrl ? `<img src="${SETTINGS.logoDataUrl}">` : ''}
         <h1>Laporan Kehadiran Pegawai</h1>
         <div class="sub">${escapeHtml(SETTINGS.namaDinas)}${SETTINGS.namaKabupaten?' &mdash; '+escapeHtml(SETTINGS.namaKabupaten):''}</div>
-        <div class="sub">Periode: ${escapeHtml(periodLabel)} &middot; ${data.totalHari} hari kerja terekam (Sabtu &amp; Minggu tidak dihitung)</div>
+        <div class="sub">Periode: ${escapeHtml(periodLabel)} &middot; ${data.totalHari} hari kerja terekam (Sabtu, Minggu &amp; hari libur tidak dihitung)</div>
       </div>
 
       <div class="kd-section">
@@ -2876,6 +2883,19 @@ function renderPengaturanTab(){
       ${uniqueBidang().length>0 ? `<button class="btn btn-primary" onclick="saveBidangPasswords()">Simpan Kata Sandi Bidang</button>` : ''}
     </div>
     <div class="card" style="max-width:520px;margin-top:16px;">
+      <div class="section-title">&#128197; Hari Libur Nasional / Cuti Bersama</div>
+      <p class="muted">Tanggal yang ditambahkan di sini otomatis tidak dihitung sebagai hari kerja di menu <b>Disiplin Pegawai</b> dan <b>Laporan Kepala Dinas</b> (selain Sabtu &amp; Minggu yang sudah otomatis dikecualikan).</p>
+      <div class="toolbar">
+        <input type="date" id="libur-date">
+        <input type="text" id="libur-ket" placeholder="Keterangan (mis. HUT Kemerdekaan RI)">
+        <button class="btn btn-primary btn-sm" onclick="addHoliday()">+ Tambah</button>
+      </div>
+      ${Object.keys(HOLIDAYS).length===0 ? '<p class="muted">Belum ada hari libur ditambahkan.</p>' : `
+      <div class="table-wrap" style="max-height:240px;"><table><thead><tr><th>Tanggal</th><th>Keterangan</th><th></th></tr></thead><tbody>
+      ${Object.keys(HOLIDAYS).sort().map(d=>`<tr><td>${formatIndoDate(d)}</td><td>${escapeHtml(HOLIDAYS[d])}</td><td><button class="btn btn-danger btn-sm" onclick="removeHoliday('${d}')">Hapus</button></td></tr>`).join('')}
+      </tbody></table></div>`}
+    </div>
+    <div class="card" style="max-width:520px;margin-top:16px;">
       <div class="section-title">&#128279; Koneksi Google Sheets</div>
       <p class="muted">Status: <b style="color:${CONN_ERROR?'var(--red)':'var(--teal)'};">${CONN_ERROR?'Bermasalah':'Tersambung'}</b></p>
       <div class="field"><label>URL Web App</label><input id="s-apiurl" type="text" style="width:100%;" value="${escapeHtml(API_URL)}"></div>
@@ -2922,6 +2942,22 @@ async function saveBidangPasswords(){
   BIDANG_PASSWORDS = map;
   await storageSet('pengaturan:bidangpass', JSON.stringify(map));
   showToast('Kata sandi admin bidang disimpan');
+}
+async function addHoliday(){
+  const dateEl = document.getElementById('libur-date');
+  const ketEl = document.getElementById('libur-ket');
+  const d = dateEl.value;
+  const k = ketEl.value.trim();
+  if(!d){ showToast('Pilih tanggal terlebih dahulu'); return; }
+  HOLIDAYS[d] = k || 'Libur';
+  await storageSet('pengaturan:harilibur', JSON.stringify(HOLIDAYS));
+  showToast('Hari libur ditambahkan');
+  renderPengaturanTab();
+}
+async function removeHoliday(dateStr){
+  delete HOLIDAYS[dateStr];
+  await storageSet('pengaturan:harilibur', JSON.stringify(HOLIDAYS));
+  renderPengaturanTab();
 }
 async function savePengaturan(){
   SETTINGS.namaDinas = document.getElementById('s-dinas').value.trim() || 'DINAS ...';
