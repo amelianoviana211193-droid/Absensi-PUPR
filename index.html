@@ -267,6 +267,12 @@
   .checkin-card{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding:14px 16px;}
   .checkin-name{font-weight:700;}
   .checkin-bidang{font-size:12px;color:var(--text-muted);}
+
+  /* Absen Wajah */
+  .face-video{width:100%;max-width:480px;border-radius:12px;background:#000;display:block;margin:0 auto;}
+  .face-status{text-align:center;margin-top:10px;font-size:13px;color:var(--text-muted);}
+  .face-confirm-card{max-width:400px;margin:16px auto;text-align:center;}
+  .face-confirm-card img{width:110px;height:110px;object-fit:cover;border-radius:50%;margin-bottom:10px;border:3px solid var(--teal);}
   .report-kb.has-bg{width:520px;aspect-ratio:1024/1536;background-size:cover;background-position:center;padding:0;position:relative;border:none;}
   .kb-bg-lokasi{position:absolute;top:32.5%;left:49%;right:6%;font-size:10px;color:#1C5631;font-weight:700;line-height:1.5;}
   .kb-bg-lokasi ol{margin:0;padding-left:14px;}
@@ -336,6 +342,7 @@ const TABS = [
   {id:'dashboard', label:'Dasbor', ic:'&#9679;'},
   {id:'kehadiran', label:'Input Kehadiran', ic:'&#10003;'},
   {id:'jadwalapel', label:'Jadwal Mingguan', ic:'&#128227;'},
+  {id:'wajah', label:'Pendaftaran Wajah', ic:'&#128248;'},
   {id:'disiplin', label:'Disiplin Pegawai', ic:'&#128202;'},
   {id:'pegawai', label:'Data Pegawai', ic:'&#128100;'},
   {id:'riwayat', label:'Riwayat', ic:'&#128197;'},
@@ -401,6 +408,16 @@ let TEGURAN_NOMOR_SURAT = '';
 let TEGURAN_TANGGAL_SURAT = todayStr();
 let CHECKIN_SEARCH = '';
 let CHECKIN_BIDANG = '';
+let WAJAH_DB = {};
+let FACEAPI_LOADED = false;
+let FACEAPI_LOADING_PROMISE = null;
+let WAJAH_SEARCH = '';
+let WAJAH_SELECTED_EMP = null;
+let WAJAH_CAM_STREAM = null;
+let FACE_STREAM = null;
+let FACE_SCAN_INTERVAL = null;
+let FACE_PAUSED = false;
+let FACE_KIOSK_ACTIVE = false;
 let JADWAL_WEEK = mondayOf(todayStr());
 let JADWAL_ROWS = [];
 let JADWAL_CATATAN = '15 Menit Sebelum Apel dimulai, Para Kepala Bidang melaporkan dan memastikan kehadiran staf di bidang ke Bagian Sekretariat terlebih dahulu.';
@@ -500,6 +517,15 @@ async function testConnection(url){
     return !!(j && j.keys!==undefined);
   }catch(e){ return false; }
 }
+async function storageGetAll(){
+  if(!API_URL) return {};
+  try{
+    const res = await fetch(API_URL+'?action=getall');
+    const j = await res.json();
+    CONN_ERROR = false;
+    return (j && j.data) ? j.data : {};
+  }catch(e){ CONN_ERROR = true; return {}; }
+}
 
 /* ---- Pegawai (structured sheet, human-editable) ---- */
 async function fetchPegawaiList(){
@@ -587,6 +613,7 @@ async function init(){
   document.getElementById('tab-content').innerHTML = '<div class="empty-state">Menghubungkan ke Google Sheets...</div>';
   await loadAll();
   if(location.hash==='#checkin'){ await renderCheckinKiosk(); return; }
+  if(location.hash==='#facecheckin'){ await renderFaceCheckinKiosk(); return; }
   if(needsLogin()){ renderLoginGate(); return; }
   if(AUTH_ROLE==='bidang'){ await renderBidangAdminView(); return; }
   if(AUTH_ROLE==='user' && USER_ALLOWED_TABS.indexOf(CURRENT_TAB)<0) CURRENT_TAB = 'dashboard';
@@ -787,6 +814,252 @@ function openCheckinKiosk(){
   location.hash = '#checkin';
   renderCheckinKiosk();
 }
+
+/* ================= ABSEN WAJAH (face-api.js) ================= */
+function loadScriptOnce(src){
+  return new Promise((resolve, reject)=>{
+    if(document.querySelector('script[src="'+src+'"]')){ resolve(); return; }
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = ()=>resolve();
+    s.onerror = ()=>reject(new Error('Gagal memuat '+src));
+    document.head.appendChild(s);
+  });
+}
+async function ensureFaceApiLoaded(setStatus){
+  if(FACEAPI_LOADED) return;
+  if(FACEAPI_LOADING_PROMISE) return FACEAPI_LOADING_PROMISE;
+  FACEAPI_LOADING_PROMISE = (async()=>{
+    if(setStatus) setStatus('Memuat modul pengenalan wajah...');
+    await loadScriptOnce('https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js');
+    const MODEL_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@master/weights';
+    if(setStatus) setStatus('Memuat model wajah...');
+    await Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+    ]);
+    FACEAPI_LOADED = true;
+  })();
+  return FACEAPI_LOADING_PROMISE;
+}
+async function loadWajahDb(){
+  const all = await storageGetAll();
+  WAJAH_DB = {};
+  Object.keys(all).forEach(k=>{
+    if(k.indexOf('wajah:')===0){
+      try{ WAJAH_DB[k.slice(6)] = JSON.parse(all[k]); }catch(e){}
+    }
+  });
+}
+
+/* ---- Enrollment tab (admin) ---- */
+async function renderWajahTab(){
+  const c = document.getElementById('tab-content');
+  c.innerHTML = `
+    <div class="topbar">
+      <div><h1>Pendaftaran Wajah</h1><div class="sub">Rekam wajah pegawai untuk fitur Absen Wajah Mandiri.</div></div>
+    </div>
+    <div class="card" style="margin-bottom:16px;">
+      <p class="muted">Fitur ini eksperimental &mdash; akurasi tergantung pencahayaan &amp; sudut kamera. Setiap pegawai perlu didaftarkan sekali di sini. Rekam di tempat terang, wajah menghadap kamera.</p>
+      <div class="toolbar">
+        <input type="search" placeholder="Cari pegawai untuk didaftarkan..." style="min-width:240px;" oninput="WAJAH_SEARCH=this.value; renderWajahList();">
+        <span id="wajah-progress" class="muted"></span>
+      </div>
+      <div id="wajah-list"></div>
+    </div>
+    <div class="card" id="wajah-capture-card" style="display:none;">
+      <div class="section-title">Ambil Wajah: <span id="wajah-target-name"></span></div>
+      <video id="wajah-video" class="face-video" autoplay muted playsinline></video>
+      <canvas id="wajah-canvas" style="display:none;"></canvas>
+      <div class="face-status" id="wajah-capture-status"></div>
+      <div style="text-align:center;margin-top:12px;display:flex;gap:8px;justify-content:center;">
+        <button class="btn btn-primary" onclick="captureWajah()">&#128248; Ambil &amp; Simpan Wajah</button>
+        <button class="btn btn-outline" onclick="stopWajahCapture()">Batal</button>
+      </div>
+    </div>
+  `;
+  await loadWajahDb();
+  renderWajahList();
+}
+function renderWajahList(){
+  const el = document.getElementById('wajah-list');
+  const prog = document.getElementById('wajah-progress');
+  if(!el) return;
+  const total = activeEmployees().length;
+  const done = activeEmployees().filter(e=>WAJAH_DB[e.id]).length;
+  if(prog) prog.textContent = 'Terdaftar: '+done+' dari '+total+' pegawai';
+  const s = WAJAH_SEARCH.trim().toLowerCase();
+  let list = activeEmployees();
+  if(s) list = list.filter(e=>e.nama.toLowerCase().includes(s));
+  list = list.slice(0,40);
+  el.innerHTML = list.length===0 ? `<p class="muted">Tidak ditemukan.</p>` : list.map(e=>{
+    const has = !!WAJAH_DB[e.id];
+    const namaEsc = escapeHtml(e.nama).replace(/'/g,"\\'");
+    return `<div class="card checkin-card">
+      <div><div class="checkin-name">${escapeHtml(e.nama)}</div><div class="checkin-bidang">${escapeHtml(e.bidang)}</div></div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        ${has ? `<span class="badge badge-hadir">&#9989; Terdaftar</span>` : `<span class="badge badge-grey">Belum</span>`}
+        <button class="btn btn-outline btn-sm" onclick="startWajahCapture('${e.id}','${namaEsc}')">${has?'Ulangi':'Daftarkan'}</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+async function startWajahCapture(empId, nama){
+  WAJAH_SELECTED_EMP = empId;
+  const card = document.getElementById('wajah-capture-card');
+  card.style.display = 'block';
+  document.getElementById('wajah-target-name').textContent = nama;
+  const statusEl = document.getElementById('wajah-capture-status');
+  statusEl.textContent = 'Menyiapkan kamera...';
+  try{
+    await ensureFaceApiLoaded(t=>{ statusEl.textContent = t; });
+    WAJAH_CAM_STREAM = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user' } });
+    const video = document.getElementById('wajah-video');
+    video.srcObject = WAJAH_CAM_STREAM;
+    statusEl.textContent = 'Posisikan wajah di tengah kamera dengan pencahayaan cukup, lalu klik Ambil & Simpan.';
+    card.scrollIntoView({ behavior:'smooth', block:'center' });
+  }catch(e){
+    console.error(e);
+    statusEl.textContent = 'Gagal mengakses kamera atau memuat modul wajah. Pastikan aplikasi dibuka lewat HTTPS dan izin kamera diaktifkan.';
+  }
+}
+function stopWajahCapture(){
+  if(WAJAH_CAM_STREAM){ WAJAH_CAM_STREAM.getTracks().forEach(t=>t.stop()); WAJAH_CAM_STREAM=null; }
+  const card = document.getElementById('wajah-capture-card');
+  if(card) card.style.display = 'none';
+  WAJAH_SELECTED_EMP = null;
+}
+async function captureWajah(){
+  const statusEl = document.getElementById('wajah-capture-status');
+  const video = document.getElementById('wajah-video');
+  statusEl.textContent = 'Mendeteksi wajah...';
+  try{
+    const det = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
+    if(!det){ statusEl.textContent = 'Wajah tidak terdeteksi. Coba posisikan lebih jelas dengan pencahayaan cukup.'; return; }
+    const descriptor = Array.from(det.descriptor);
+    WAJAH_DB[WAJAH_SELECTED_EMP] = descriptor;
+    await storageSet('wajah:'+WAJAH_SELECTED_EMP, JSON.stringify(descriptor));
+    showToast('Wajah berhasil didaftarkan');
+    stopWajahCapture();
+    renderWajahList();
+  }catch(e){
+    console.error(e);
+    statusEl.textContent = 'Gagal memproses wajah. Coba lagi.';
+  }
+}
+
+/* ---- Face check-in kiosk (public, no login) ---- */
+function openFaceKiosk(){
+  location.hash = '#facecheckin';
+  renderFaceCheckinKiosk();
+}
+async function renderFaceCheckinKiosk(){
+  await ensureAttendanceLoaded(todayStr());
+  document.getElementById('sidebar').innerHTML = '';
+  document.getElementById('mobtabs').innerHTML = '';
+  const c = document.getElementById('tab-content');
+  c.innerHTML = `
+    <div style="max-width:480px;margin:0 auto;">
+      <div class="card" style="text-align:center;margin-bottom:16px;">
+        <h1 style="margin:0 0 4px;color:var(--navy);">&#128248; Absen Wajah Mandiri</h1>
+        <div class="muted">${escapeHtml(SETTINGS.namaDinas)} &middot; ${formatIndoDate(todayStr())}</div>
+      </div>
+      <div class="card">
+        <video id="face-kiosk-video" class="face-video" autoplay muted playsinline></video>
+        <canvas id="face-kiosk-canvas" style="display:none;"></canvas>
+        <div class="face-status" id="face-kiosk-status">Menyiapkan kamera...</div>
+      </div>
+      <div id="face-kiosk-confirm"></div>
+      <div style="text-align:center;margin-top:16px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap;">
+        <a href="#" onclick="location.hash='#checkin'; location.reload(); return false;" class="muted" style="font-size:12px;">Gunakan pencarian nama (kalau wajah tidak terdeteksi)</a>
+        <a href="#" onclick="exitFaceKiosk(); return false;" class="muted" style="font-size:12px;">Keluar</a>
+      </div>
+    </div>
+  `;
+  const statusEl = document.getElementById('face-kiosk-status');
+  try{
+    await ensureFaceApiLoaded(t=>{ if(statusEl) statusEl.textContent = t; });
+    await loadWajahDb();
+    if(Object.keys(WAJAH_DB).length===0){
+      statusEl.textContent = 'Belum ada data wajah terdaftar. Hubungi Admin untuk mendaftarkan wajah pegawai terlebih dahulu di menu Pendaftaran Wajah.';
+      return;
+    }
+    FACE_STREAM = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user' } });
+    const video = document.getElementById('face-kiosk-video');
+    video.srcObject = FACE_STREAM;
+    statusEl.textContent = 'Arahkan wajah ke kamera...';
+    FACE_KIOSK_ACTIVE = true;
+    FACE_PAUSED = false;
+    FACE_SCAN_INTERVAL = setInterval(scanFaceKioskFrame, 900);
+  }catch(e){
+    console.error(e);
+    statusEl.textContent = 'Gagal mengakses kamera atau memuat modul wajah. Pastikan aplikasi dibuka lewat HTTPS dan izin kamera diaktifkan.';
+  }
+}
+async function scanFaceKioskFrame(){
+  if(FACE_PAUSED || !FACE_KIOSK_ACTIVE) return;
+  const video = document.getElementById('face-kiosk-video');
+  if(!video || video.readyState<2) return;
+  try{
+    const det = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
+    if(!det) return;
+    let bestId=null, bestDist=999;
+    Object.keys(WAJAH_DB).forEach(empId=>{
+      const dist = faceapi.euclideanDistance(det.descriptor, WAJAH_DB[empId]);
+      if(dist < bestDist){ bestDist = dist; bestId = empId; }
+    });
+    const THRESHOLD = 0.55;
+    if(bestId && bestDist < THRESHOLD){
+      const emp = EMPLOYEES.find(e=>e.id===bestId);
+      if(emp) showFaceConfirm(emp, video);
+    }
+  }catch(e){ /* abaikan error deteksi sesaat */ }
+}
+function showFaceConfirm(emp, video){
+  FACE_PAUSED = true;
+  const canvas = document.getElementById('face-kiosk-canvas');
+  canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+  const thumb = canvas.toDataURL('image/jpeg', 0.7);
+  const status = getAttendance(todayStr(), emp.id).status;
+  const already = status !== 'Tanpa Keterangan';
+  const el = document.getElementById('face-kiosk-confirm');
+  el.innerHTML = `
+    <div class="card face-confirm-card">
+      <img src="${thumb}">
+      <div style="font-weight:700;font-size:16px;">${escapeHtml(emp.nama)}</div>
+      <div class="muted" style="margin-bottom:12px;">${escapeHtml(emp.bidang)}</div>
+      ${already ? `<p class="muted">Status hari ini sudah tercatat: <b>${escapeHtml(status)}</b></p><button class="btn btn-outline" onclick="dismissFaceConfirm()">Kembali</button>` : `
+      <div style="display:flex;gap:8px;justify-content:center;">
+        <button class="btn btn-primary" onclick="confirmFaceCheckin('${emp.id}')">&#9989; Ya, Absen Sekarang</button>
+        <button class="btn btn-outline" onclick="dismissFaceConfirm()">Bukan Saya</button>
+      </div>`}
+    </div>
+  `;
+}
+function dismissFaceConfirm(){
+  const el = document.getElementById('face-kiosk-confirm');
+  if(el) el.innerHTML = '';
+  FACE_PAUSED = false;
+}
+async function confirmFaceCheckin(empId){
+  const current = getAttendance(todayStr(), empId).status;
+  if(current !== 'Tanpa Keterangan'){ showToast('Status Anda sudah tercatat sebelumnya.'); dismissFaceConfirm(); return; }
+  await setAttendanceOne(todayStr(), empId, 'Hadir Apel Pagi', undefined);
+  showToast('Absen wajah berhasil dicatat. Terima kasih!');
+  const el = document.getElementById('face-kiosk-confirm');
+  if(el) el.innerHTML = `<div class="card" style="text-align:center;color:var(--teal);font-weight:700;">&#9989; Kehadiran tercatat!</div>`;
+  setTimeout(()=>{ if(el) el.innerHTML=''; FACE_PAUSED=false; }, 2500);
+}
+function exitFaceKiosk(){
+  FACE_KIOSK_ACTIVE = false;
+  if(FACE_SCAN_INTERVAL){ clearInterval(FACE_SCAN_INTERVAL); FACE_SCAN_INTERVAL=null; }
+  if(FACE_STREAM){ FACE_STREAM.getTracks().forEach(t=>t.stop()); FACE_STREAM=null; }
+  location.hash = '';
+  location.reload();
+}
+
 function renderConnectGate(msg){
   document.getElementById('sidebar').innerHTML = '';
   document.getElementById('mobtabs').innerHTML = '';
@@ -862,6 +1135,7 @@ async function renderTab(){
   else if(CURRENT_TAB==='kehadiran') await renderKehadiranTab();
   else if(CURRENT_TAB==='disiplin') await renderDisiplinTab();
   else if(CURRENT_TAB==='jadwalapel') await renderJadwalApelTab();
+  else if(CURRENT_TAB==='wajah') await renderWajahTab();
   else if(CURRENT_TAB==='pegawai') renderPegawaiTab();
   else if(CURRENT_TAB==='riwayat') await renderRiwayatTab();
   else if(CURRENT_TAB==='laporan') await renderLaporanTab();
@@ -917,6 +1191,7 @@ async function renderDashboard(){
       </div>
       <div class="spacer"></div>
       <button class="btn btn-outline" onclick="openCheckinKiosk()">&#9989; Buka Absen Mandiri</button>
+      <button class="btn btn-outline" onclick="openFaceKiosk()">&#128248; Buka Absen Wajah</button>
       <button class="btn btn-outline" onclick="switchTab('kehadiran')">&#9998; Isi Kehadiran</button>
       <button class="btn btn-primary" onclick="switchTab('laporan')">&#128196; Buat Laporan</button>
     </div>
