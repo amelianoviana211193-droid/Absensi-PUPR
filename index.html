@@ -374,7 +374,7 @@ const BULAN_ID = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agus
 
 /* ================= STATE ================= */
 let EMPLOYEES = [];
-let SETTINGS = { namaDinas:'DINAS ...', namaKabupaten:'KABUPATEN ...', kepalaDinas:'', kepalaDinasNip:'', alamatDinas:'', motto:'Bekerja Keras, Bergerak Cepat dan Bertindak Tepat', programBadge:'', logoDataUrl:'', badgeLogoDataUrl:'', adminPassword:'', userPassword:'', deskripsiJumatBersih:'Kegiatan Jumat Bersih dilaksanakan oleh seluruh Pegawai sebagai bentuk komitmen dalam menjaga kebersihan, kenyamanan, dan kesehatan lingkungan kerja.', lokasiJumatBersih1:'', lokasiJumatBersih2:'' };
+let SETTINGS = { namaDinas:'DINAS ...', namaKabupaten:'KABUPATEN ...', kepalaDinas:'', kepalaDinasNip:'', alamatDinas:'', motto:'Bekerja Keras, Bergerak Cepat dan Bertindak Tepat', programBadge:'', logoDataUrl:'', badgeLogoDataUrl:'', adminPassword:'', userPassword:'', deskripsiJumatBersih:'Kegiatan Jumat Bersih dilaksanakan oleh seluruh Pegawai sebagai bentuk komitmen dalam menjaga kebersihan, kenyamanan, dan kesehatan lingkungan kerja.', lokasiJumatBersih1:'', lokasiJumatBersih2:'', geoEnabled:'', officeLat:'', officeLng:'', officeRadius:'150' };
 let CURRENT_TAB = 'dashboard';
 let ATTENDANCE_CACHE = {};
 let BULK_SELECTED = new Set();
@@ -741,10 +741,15 @@ async function doBidangCheckin(empId){
   renderBidangAdminList();
 }
 async function renderCheckinKiosk(){
-  await ensureAttendanceLoaded(todayStr());
   document.getElementById('sidebar').innerHTML = '';
   document.getElementById('mobtabs').innerHTML = '';
   const c = document.getElementById('tab-content');
+  if(SETTINGS.geoEnabled==='true' && SETTINGS.officeLat){
+    c.innerHTML = `<div class="card empty-state">Memeriksa lokasi Anda...</div>`;
+    const geo = await checkGeofence();
+    if(!geo.ok){ renderGeoBlocked(geo.reason, 'renderCheckinKiosk'); return; }
+  }
+  await ensureAttendanceLoaded(todayStr());
   c.innerHTML = `
     <div style="max-width:640px;margin:0 auto;">
       <div class="card" style="text-align:center;margin-bottom:16px;">
@@ -815,6 +820,47 @@ function exitCheckinKiosk(){
 function openCheckinKiosk(){
   location.hash = '#checkin';
   renderCheckinKiosk();
+}
+
+function distanceMeters(lat1, lng1, lat2, lng2){
+  const R = 6371000;
+  const dLat = (lat2-lat1)*Math.PI/180;
+  const dLng = (lng2-lng1)*Math.PI/180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  const c = 2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R*c;
+}
+function checkGeofence(){
+  if(SETTINGS.geoEnabled!=='true' || !SETTINGS.officeLat || !SETTINGS.officeLng){
+    return Promise.resolve({ ok:true });
+  }
+  return new Promise((resolve)=>{
+    if(!navigator.geolocation){ resolve({ ok:false, reason:'Perangkat/browser ini tidak mendukung layanan lokasi.' }); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos)=>{
+        const dist = distanceMeters(pos.coords.latitude, pos.coords.longitude, parseFloat(SETTINGS.officeLat), parseFloat(SETTINGS.officeLng));
+        const radius = parseFloat(SETTINGS.officeRadius)||150;
+        if(dist <= radius) resolve({ ok:true, dist });
+        else resolve({ ok:false, reason:'Anda berada di luar radius lokasi kantor (jarak sekitar '+Math.round(dist)+' m dari titik yang ditentukan).', dist });
+      },
+      ()=>{ resolve({ ok:false, reason:'Gagal mengambil lokasi. Pastikan izin lokasi (GPS) diaktifkan untuk browser ini, lalu coba lagi.' }); },
+      { enableHighAccuracy:true, timeout:12000 }
+    );
+  });
+}
+function renderGeoBlocked(reason, retryFn){
+  document.getElementById('sidebar').innerHTML = '';
+  document.getElementById('mobtabs').innerHTML = '';
+  const c = document.getElementById('tab-content');
+  c.innerHTML = `
+    <div class="card" style="max-width:420px;margin:60px auto;text-align:center;">
+      <div style="font-size:40px;">&#128205;</div>
+      <h3 style="color:var(--red);">Absen Mandiri Tidak Tersedia di Lokasi Ini</h3>
+      <p class="muted">${escapeHtml(reason)}</p>
+      <button class="btn btn-primary" onclick="${retryFn}()">Coba Lagi</button>
+      <div style="margin-top:14px;"><a href="#" onclick="location.hash=''; location.reload(); return false;" class="muted" style="font-size:12px;">Kembali</a></div>
+    </div>
+  `;
 }
 
 /* ================= ABSEN WAJAH (face-api.js) ================= */
@@ -957,10 +1003,15 @@ function openFaceKiosk(){
   renderFaceCheckinKiosk();
 }
 async function renderFaceCheckinKiosk(){
-  await ensureAttendanceLoaded(todayStr());
   document.getElementById('sidebar').innerHTML = '';
   document.getElementById('mobtabs').innerHTML = '';
   const c = document.getElementById('tab-content');
+  if(SETTINGS.geoEnabled==='true' && SETTINGS.officeLat){
+    c.innerHTML = `<div class="card empty-state">Memeriksa lokasi Anda...</div>`;
+    const geo = await checkGeofence();
+    if(!geo.ok){ renderGeoBlocked(geo.reason, 'renderFaceCheckinKiosk'); return; }
+  }
+  await ensureAttendanceLoaded(todayStr());
   c.innerHTML = `
     <div style="max-width:480px;margin:0 auto;">
       <div class="card" style="text-align:center;margin-bottom:16px;">
@@ -2898,6 +2949,22 @@ function renderPengaturanTab(){
       </tbody></table></div>`}
     </div>
     <div class="card" style="max-width:520px;margin-top:16px;">
+      <div class="section-title">&#128205; Batasan Lokasi Absen Mandiri</div>
+      <p class="muted">Kalau diaktifkan, Absen Mandiri (nama &amp; wajah) hanya bisa dilakukan dalam radius tertentu dari titik kantor. Catatan: GPS bisa meleset di dalam gedung dan secara teknis bisa dipalsukan oleh aplikasi tertentu &mdash; anggap ini sebagai lapis tambahan, bukan jaminan mutlak.</p>
+      <div class="field">
+        <label><input type="checkbox" id="s-geo-enabled" ${SETTINGS.geoEnabled==='true'?'checked':''}> Aktifkan batasan lokasi</label>
+      </div>
+      <div class="toolbar" style="margin-bottom:10px;">
+        <button class="btn btn-outline btn-sm" onclick="useCurrentLocationAsOffice()">&#128205; Gunakan Lokasi Saya Sekarang (berdiri di kantor)</button>
+      </div>
+      <div class="grid g2">
+        <div class="field"><label>Latitude Kantor</label><input id="s-geo-lat" type="text" value="${escapeHtml(SETTINGS.officeLat)}" placeholder="-9.5362"></div>
+        <div class="field"><label>Longitude Kantor</label><input id="s-geo-lng" type="text" value="${escapeHtml(SETTINGS.officeLng)}" placeholder="124.9191"></div>
+      </div>
+      <div class="field"><label>Radius Diizinkan (meter)</label><input id="s-geo-radius" type="number" min="20" value="${escapeHtml(SETTINGS.officeRadius||'150')}" style="width:120px;"></div>
+      <button class="btn btn-primary" onclick="saveGeoSettings()">Simpan Batasan Lokasi</button>
+    </div>
+    <div class="card" style="max-width:520px;margin-top:16px;">
       <div class="section-title">&#128279; Koneksi Google Sheets</div>
       <p class="muted">Status: <b style="color:${CONN_ERROR?'var(--red)':'var(--teal)'};">${CONN_ERROR?'Bermasalah':'Tersambung'}</b></p>
       <div class="field"><label>URL Web App</label><input id="s-apiurl" type="text" style="width:100%;" value="${escapeHtml(API_URL)}"></div>
@@ -2944,6 +3011,31 @@ async function saveBidangPasswords(){
   BIDANG_PASSWORDS = map;
   await storageSet('pengaturan:bidangpass', JSON.stringify(map));
   showToast('Kata sandi admin bidang disimpan');
+}
+function useCurrentLocationAsOffice(){
+  if(!navigator.geolocation){ showToast('Perangkat/browser ini tidak mendukung layanan lokasi.'); return; }
+  showToast('Mengambil lokasi Anda saat ini...');
+  navigator.geolocation.getCurrentPosition(
+    (pos)=>{
+      document.getElementById('s-geo-lat').value = pos.coords.latitude.toFixed(6);
+      document.getElementById('s-geo-lng').value = pos.coords.longitude.toFixed(6);
+      showToast('Lokasi terisi. Jangan lupa klik Simpan.');
+    },
+    ()=>{ showToast('Gagal mengambil lokasi. Pastikan izin lokasi diaktifkan.'); },
+    { enableHighAccuracy:true, timeout:12000 }
+  );
+}
+async function saveGeoSettings(){
+  SETTINGS.geoEnabled = document.getElementById('s-geo-enabled').checked ? 'true' : '';
+  SETTINGS.officeLat = document.getElementById('s-geo-lat').value.trim();
+  SETTINGS.officeLng = document.getElementById('s-geo-lng').value.trim();
+  SETTINGS.officeRadius = document.getElementById('s-geo-radius').value.trim() || '150';
+  if(SETTINGS.geoEnabled==='true' && (!SETTINGS.officeLat || !SETTINGS.officeLng)){
+    showToast('Isi dulu Latitude & Longitude kantor sebelum mengaktifkan.');
+    return;
+  }
+  await saveSettings();
+  showToast('Batasan lokasi disimpan');
 }
 async function addHoliday(){
   const dateEl = document.getElementById('libur-date');
