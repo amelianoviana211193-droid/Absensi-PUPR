@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SIMPEG Kehadiran</title>
+<title>SIMPEG PUPR</title>
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0C2036">
@@ -459,7 +459,7 @@ let AUTH_ROLE = localStorage.getItem('simpeg_role') || null;
 let AUTH_BIDANG = localStorage.getItem('simpeg_bidang') || null;
 let BIDANG_PASSWORDS = {};
 let HOLIDAYS = {}; // { 'YYYY-MM-DD': 'keterangan' }
-const USER_ALLOWED_TABS = ['dashboard','kehadiran'];
+const USER_ALLOWED_TABS = ['dashboard','kehadiran','wajah'];
 function visibleTabs(){ return AUTH_ROLE==='user' ? TABS.filter(t=>USER_ALLOWED_TABS.indexOf(t.id)>=0) : TABS; }
 
 /* ================= UTILS ================= */
@@ -640,7 +640,7 @@ function renderLoginGate(msg){
   const bidangList = Object.keys(BIDANG_PASSWORDS).filter(b=>BIDANG_PASSWORDS[b]);
   c.innerHTML = `
     <div class="card" style="max-width:400px;margin:60px auto;">
-      <div class="section-title">&#128274; Masuk ke SIMPEG Kehadiran</div>
+      <div class="section-title">&#128274; Masuk ke SIMPEG PUPR</div>
       <p class="muted" style="margin-top:-8px;">${escapeHtml(SETTINGS.namaDinas)}</p>
       ${msg?`<div style="background:var(--red-pale);color:var(--red);padding:9px 12px;border-radius:8px;font-size:12.5px;margin-bottom:12px;">${escapeHtml(msg)}</div>`:''}
       <div class="field"><label>Masuk sebagai</label>
@@ -1157,7 +1157,7 @@ function renderShell(){
   sb.innerHTML = `
     <div class="brand">
       <div class="ring"></div>
-      <div class="brand-text"><b>SIMPEG</b><span>Kehadiran Pegawai</span></div>
+      <div class="brand-text"><b>SIMPEG PUPR</b><span>Kehadiran Pegawai</span></div>
     </div>
     ${tabs.map(t=>`<div class="nav-item ${CURRENT_TAB===t.id?'active':''}" onclick="switchTab('${t.id}')"><span class="ic">${t.ic}</span>${t.label}</div>`).join('')}
     <div class="foot">${escapeHtml(SETTINGS.namaDinas)}<br>${EMPLOYEES.length} pegawai terdaftar<br><span style="color:${CONN_ERROR?'#E8918A':'#7FD6B8'};">${CONN_ERROR?'&#9679; Koneksi bermasalah':'&#9679; Tersambung ke Google Sheets'}</span>
@@ -2851,7 +2851,7 @@ async function renderKadisReportPreview(){
         </div>`;
       }).join('')}
 
-      <p class="kd-note">Dibuat otomatis oleh SIMPEG Kehadiran pada ${formatIndoDate(todayStr())}.</p>
+      <p class="kd-note">Dibuat otomatis oleh SIMPEG PUPR pada ${formatIndoDate(todayStr())}.</p>
     </div>
   `;
 }
