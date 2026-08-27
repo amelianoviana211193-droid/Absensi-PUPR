@@ -528,6 +528,14 @@ async function storageGetAll(){
     return (j && j.data) ? j.data : {};
   }catch(e){ CONN_ERROR = true; return {}; }
 }
+async function storageBulkSetKv(items){
+  if(!API_URL || !items || items.length===0) return false;
+  try{
+    await fetch(API_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify({action:'bulkSetKv', items}) });
+    CONN_ERROR = false;
+    return true;
+  }catch(e){ CONN_ERROR = true; showToast('Gagal menyimpan ke Google Sheets.'); return false; }
+}
 
 /* ---- Pegawai (structured sheet, human-editable) ---- */
 async function fetchPegawaiList(){
@@ -576,8 +584,16 @@ async function saveSettings(){ await storageSet('pengaturan:info', JSON.stringif
 
 async function ensureAttendanceLoaded(date){
   if(ATTENDANCE_CACHE[date]) return;
-  const raw = await storageGet('kehadiran:'+date);
-  ATTENDANCE_CACHE[date] = raw ? JSON.parse(raw) : {};
+  const all = await storageGetAll();
+  const prefix = 'kehadiran:'+date+':';
+  const day = {};
+  Object.keys(all).forEach(k=>{
+    if(k.indexOf(prefix)===0){
+      const empId = k.slice(prefix.length);
+      try{ day[empId] = JSON.parse(all[k]); }catch(e){}
+    }
+  });
+  ATTENDANCE_CACHE[date] = day;
 }
 function getAttendance(date, empId){
   const day = ATTENDANCE_CACHE[date] || {};
@@ -587,17 +603,20 @@ async function setAttendanceOne(date, empId, status, ket){
   await ensureAttendanceLoaded(date);
   const day = ATTENDANCE_CACHE[date];
   const prev = day[empId] || {};
-  day[empId] = { status: status!==undefined?status:(prev.status||'Tanpa Keterangan'), ket: ket!==undefined?ket:(prev.ket||''), ts: new Date().toISOString() };
-  await storageSet('kehadiran:'+date, JSON.stringify(day));
+  const entry = { status: status!==undefined?status:(prev.status||'Tanpa Keterangan'), ket: ket!==undefined?ket:(prev.ket||''), ts: new Date().toISOString() };
+  day[empId] = entry;
+  await storageSet('kehadiran:'+date+':'+empId, JSON.stringify(entry));
 }
 async function setAttendanceBulk(date, empIds, status){
   await ensureAttendanceLoaded(date);
   const day = ATTENDANCE_CACHE[date];
-  empIds.forEach(id=>{
+  const items = empIds.map(id=>{
     const prev = day[id] || {};
-    day[id] = { status, ket: prev.ket||'', ts: new Date().toISOString() };
+    const entry = { status, ket: prev.ket||'', ts: new Date().toISOString() };
+    day[id] = entry;
+    return { key: 'kehadiran:'+date+':'+id, value: JSON.stringify(entry) };
   });
-  await storageSet('kehadiran:'+date, JSON.stringify(day));
+  await storageBulkSetKv(items);
 }
 
 function dayCounts(date){
@@ -1297,7 +1316,9 @@ async function renderDashboard(){
 async function renderMonthRecap(){
   const ym = DASHBOARD_DATE.slice(0,7);
   const keys = await storageList('kehadiran:'+ym);
-  const dates = keys.map(k=>k.replace('kehadiran:','')).sort();
+  const dateSet = new Set();
+  keys.forEach(k=>{ const rest = k.slice('kehadiran:'.length); dateSet.add(rest.split(':')[0]); });
+  const dates = Array.from(dateSet).sort();
   const totalAktif = activeEmployees().length;
   const rows = [];
   for(const d of dates){
@@ -1658,13 +1679,21 @@ function isLiburNasional(dateStr){ return !!HOLIDAYS[dateStr]; }
 function isHariKerja(dateStr){ return isWeekday(dateStr) && !isLiburNasional(dateStr); }
 async function loadMonthDates(month){
   const keys = await storageList('kehadiran:'+month);
-  const dates = keys.map(k=>k.replace('kehadiran:','')).filter(isHariKerja).sort();
+  const dateSet = new Set();
+  keys.forEach(k=>{ const rest = k.slice('kehadiran:'.length); dateSet.add(rest.split(':')[0]); });
+  const dates = Array.from(dateSet).filter(isHariKerja).sort();
   for(const d of dates){ await ensureAttendanceLoaded(d); }
   return dates;
 }
 async function loadDatesInRange(startDate, endDate){
   const keys = await storageList('kehadiran:');
-  const dates = keys.map(k=>k.replace('kehadiran:','')).filter(d=> d>=startDate && d<=endDate).filter(isHariKerja).sort();
+  const dateSet = new Set();
+  keys.forEach(k=>{
+    const rest = k.slice('kehadiran:'.length);
+    const date = rest.split(':')[0];
+    if(date>=startDate && date<=endDate) dateSet.add(date);
+  });
+  const dates = Array.from(dateSet).filter(isHariKerja).sort();
   for(const d of dates){ await ensureAttendanceLoaded(d); }
   return dates;
 }
@@ -2975,6 +3004,11 @@ function renderPengaturanTab(){
       <p class="muted" style="font-size:12px;margin-top:8px;">Gunakan URL Web App yang sama di setiap HP/perangkat yang dipakai untuk mengisi kehadiran, supaya semua mengakses data yang sama di Spreadsheet.</p>
     </div>
     <div class="card" style="max-width:520px;margin-top:16px;">
+      <div class="section-title">&#128260; Perbaikan Data Kehadiran Lama</div>
+      <p class="muted">Aplikasi baru saja diperbarui agar kehadiran tiap pegawai tersimpan terpisah per orang (supaya aman dipakai beberapa akun sekaligus tanpa saling menimpa). Kalau sebelumnya sempat ada data kehadiran yang diisi memakai versi lama, klik tombol ini <b>sekali saja</b> untuk memindahkan data tersebut ke format baru.</p>
+      <button class="btn btn-outline" onclick="migrateOldAttendanceData()">Migrasi Data Kehadiran Lama</button>
+    </div>
+    <div class="card" style="max-width:520px;margin-top:16px;">
       <div class="section-title" style="color:var(--red);">Zona Berbahaya</div>
       <p class="muted">Menghapus seluruh data pegawai dari Spreadsheet. Tindakan ini tidak dapat dibatalkan.</p>
       <button class="btn btn-danger" onclick="resetAllData()">Hapus Semua Data Pegawai</button>
@@ -3036,6 +3070,29 @@ async function saveGeoSettings(){
   }
   await saveSettings();
   showToast('Batasan lokasi disimpan');
+}
+async function migrateOldAttendanceData(){
+  showToast('Memeriksa data lama...');
+  const all = await storageGetAll();
+  const items = [];
+  Object.keys(all).forEach(k=>{
+    if(k.indexOf('kehadiran:')===0){
+      const rest = k.slice('kehadiran:'.length);
+      if(rest.indexOf(':')===-1){
+        try{
+          const dayBlob = JSON.parse(all[k]);
+          Object.keys(dayBlob).forEach(empId=>{
+            items.push({ key: 'kehadiran:'+rest+':'+empId, value: JSON.stringify(dayBlob[empId]) });
+          });
+        }catch(e){}
+      }
+    }
+  });
+  if(items.length===0){ showToast('Tidak ada data lama yang perlu dimigrasi.'); return; }
+  showToast('Memigrasi '+items.length+' entri kehadiran...');
+  ATTENDANCE_CACHE = {};
+  await storageBulkSetKv(items);
+  showToast('Migrasi selesai: '+items.length+' entri kehadiran dipindahkan ke format baru.');
 }
 async function addHoliday(){
   const dateEl = document.getElementById('libur-date');
