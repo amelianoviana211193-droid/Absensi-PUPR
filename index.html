@@ -2727,7 +2727,8 @@ function buildReportText(date){
     out += '\n'+s.toUpperCase()+' ('+names.length+')\n';
     names.forEach((e,i)=>{
       const a = getAttendance(date, e.id);
-      out += (i+1)+'. '+e.nama + (a.ket ? ' - '+a.ket : '') + '\n';
+      const bidangSuffix = s==='Tanpa Keterangan' ? ' ('+e.bidang+')' : '';
+      out += (i+1)+'. '+e.nama + bidangSuffix + (a.ket ? ' - '+a.ket : '') + '\n';
     });
   });
   if(SETTINGS.kepalaDinas){
