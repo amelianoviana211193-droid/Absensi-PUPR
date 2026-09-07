@@ -2869,15 +2869,17 @@ async function renderKadisReportPreview(){
         const groups = data.kategoriList[cat];
         if(!groups || groups.length===0) return '';
         const totalOrang = groups.reduce((s,g)=>s+g.items.length,0);
+        let no = 0;
+        const rows = groups.map(g=>g.items.map(p=>{
+          no++;
+          return `<tr><td>${no}</td><td>${escapeHtml(p.nama)}</td><td>${escapeHtml(g.bidang)}</td><td>${p.jumlah}</td></tr>`;
+        }).join('')).join('');
         return `<div class="kd-section">
           <h3>Rekap Pegawai dengan Keterangan: ${escapeHtml(cat)} (${totalOrang} pegawai, diurutkan per Bidang/Bagian)</h3>
-          ${groups.map(g=>`
-            <p style="font-size:12px;font-weight:700;color:var(--navy);margin:10px 0 4px;">Bidang: ${escapeHtml(g.bidang)} (${g.items.length} pegawai)</p>
-            <table class="kd-table">
-              <thead><tr><th style="width:36px;">No</th><th>Nama</th><th>Jumlah Kali</th></tr></thead>
-              <tbody>${g.items.map((p,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(p.nama)}</td><td>${p.jumlah}</td></tr>`).join('')}</tbody>
-            </table>
-          `).join('')}
+          <table class="kd-table">
+            <thead><tr><th style="width:36px;">No</th><th>Nama</th><th>Bidang</th><th>Jumlah Kali</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
         </div>`;
       }).join('')}
 
