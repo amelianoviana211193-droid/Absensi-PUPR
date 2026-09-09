@@ -247,6 +247,19 @@
   .kd-highlight{background:var(--red-pale);color:var(--red);font-weight:700;padding:8px 12px;border-radius:6px;font-size:11.5px;margin-top:8px;}
   .kd-grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
 
+  /* Laporan Pemimpin Apel — compact cards, 6 per A4 page */
+  .pa-page{width:794px;height:1123px;box-sizing:border-box;padding:16px;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:repeat(3,1fr);gap:8px;background:#fff;}
+  .pa-card{border:1px dashed #9aa4b1;border-radius:4px;padding:8px 9px;box-sizing:border-box;font-family:'Inter',sans-serif;color:#1B2430;display:flex;flex-direction:column;overflow:hidden;}
+  .pa-card .pa-head{text-align:center;margin-bottom:4px;line-height:1.3;}
+  .pa-card .pa-head b{font-size:9.5px;font-family:'Space Grotesk';}
+  .pa-card .pa-head div{font-size:8px;color:#5B6774;}
+  .pa-card .pa-summary{text-align:center;font-size:8.5px;margin-bottom:5px;}
+  .pa-card table{width:100%;border-collapse:collapse;font-size:7.3px;}
+  .pa-card th{background:#EEF0F3;padding:2px 3px;text-align:left;font-weight:700;}
+  .pa-card td{padding:2px 3px;border-bottom:1px solid #E2E7ED;}
+  .pa-card .pa-worst{font-size:7.3px;font-weight:700;color:#C0483E;margin-top:4px;}
+  .pa-card .pa-note{font-size:7px;font-weight:700;margin-top:4px;line-height:1.4;}
+
   /* Surat Teguran */
   .teguran-flag-row{cursor:default;}
   .teguran-flag-row td{background:var(--red-pale);}
@@ -2771,8 +2784,10 @@ function printReport(){
 
 /* ================= LAPORAN PEMIMPIN APEL (per Bidang) ================= */
 const TIDAK_HADIR_KET_STATUSES = ['Tugas Belajar','Latsar CPNS','Tugas Luar Daerah','WFA','Terlambat','Izin Terlambat','Cuti','Sakit','Izin Tidak Masuk'];
+const HADIR_COMPOSISI_STATUSES = ['Hadir Apel Pagi','Tugas Belajar','Latsar CPNS','Tugas Luar Daerah','WFA','Terlambat','Izin Terlambat','Cuti'];
+const TIDAK_HADIR_COMPOSISI_STATUSES = ['Sakit','Izin Tidak Masuk','Tanpa Keterangan'];
 function computePemimpinApelData(date){
-  const { hadir, tidak, total } = dayCounts(date);
+  const { hadir, tidak, total, counts } = dayCounts(date);
   const bidangRows = uniqueBidang().map(b=>{
     const list = activeEmployees().filter(e=>e.bidang===b);
     let hadirApel=0, tdkKet=0, tdkTanpaKet=0;
@@ -2784,7 +2799,12 @@ function computePemimpinApelData(date){
     });
     return { bidang:b, jumlah:list.length, hadirApel, tdkKet, tdkTanpaKet, totalTidak: tdkKet+tdkTanpaKet };
   });
-  return { hadir, tidak, total, bidangRows };
+  return { hadir, tidak, total, counts, bidangRows };
+}
+function buildKomposisiNoteText(counts, hadir, tidak){
+  const hadirParts = HADIR_COMPOSISI_STATUSES.map(s=>s+'('+(counts[s]||0)+')').join(' + ');
+  const tidakParts = TIDAK_HADIR_COMPOSISI_STATUSES.map(s=>s+'('+(counts[s]||0)+')').join(' + ');
+  return 'Hadir = '+hadirParts+' = '+hadir+'\nTidak Hadir = '+tidakParts+' = '+tidak;
 }
 function buildPemimpinApelText(date){
   const data = computePemimpinApelData(date);
@@ -2804,6 +2824,7 @@ function buildPemimpinApelText(date){
   if(worst && worst.totalTidak>0){
     out += '\nBidang dengan jumlah tidak hadir terbanyak hari ini: '+worst.bidang+' ('+worst.totalTidak+' dari '+worst.jumlah+' pegawai).\n';
   }
+  out += '\n'+buildKomposisiNoteText(data.counts, data.hadir, data.tidak)+'\n';
   return out;
 }
 async function copyPemimpinApelText(){
@@ -2818,6 +2839,8 @@ function renderPemimpinApelReport(){
   if(!el) return;
   const data = computePemimpinApelData(LAPORAN_DATE);
   const worst = [...data.bidangRows].sort((a,b)=>b.totalTidak-a.totalTidak)[0];
+  const hadirNoteHtml = HADIR_COMPOSISI_STATUSES.map(s=>escapeHtml(s)+'('+(data.counts[s]||0)+')').join(' + ');
+  const tidakNoteHtml = TIDAK_HADIR_COMPOSISI_STATUSES.map(s=>escapeHtml(s)+'('+(data.counts[s]||0)+')').join(' + ');
   el.innerHTML = `
     <div class="report-kd" id="pa-capture">
       <div class="kd-head">
@@ -2837,34 +2860,56 @@ function renderPemimpinApelReport(){
           <tbody>${data.bidangRows.map(r=>`<tr><td>${escapeHtml(r.bidang)}</td><td>${r.jumlah}</td><td>${r.hadirApel}</td><td>${r.tdkKet}</td><td>${r.tdkTanpaKet}</td></tr>`).join('')}</tbody>
         </table>
         ${worst && worst.totalTidak>0 ? `<div class="kd-highlight">Bidang dengan jumlah tidak hadir terbanyak hari ini: ${escapeHtml(worst.bidang)} (${worst.totalTidak} dari ${worst.jumlah} pegawai).</div>` : ''}
+        <p style="font-size:10.5px;font-weight:700;margin-top:10px;line-height:1.6;">
+          Hadir = ${hadirNoteHtml} = ${data.hadir}<br>
+          Tidak Hadir = ${tidakNoteHtml} = ${data.tidak}
+        </p>
       </div>
       <p class="kd-note">Dibuat otomatis oleh SIMPEG PUPR pada ${formatIndoDate(todayStr())}.</p>
     </div>
   `;
 }
+function buildPemimpinApelCardHtml(date){
+  const data = computePemimpinApelData(date);
+  const worst = [...data.bidangRows].sort((a,b)=>b.totalTidak-a.totalTidak)[0];
+  const hadirNoteHtml = HADIR_COMPOSISI_STATUSES.map(s=>escapeHtml(s)+'('+(data.counts[s]||0)+')').join('+');
+  const tidakNoteHtml = TIDAK_HADIR_COMPOSISI_STATUSES.map(s=>escapeHtml(s)+'('+(data.counts[s]||0)+')').join('+');
+  return `
+    <div class="pa-card">
+      <div class="pa-head">
+        <b>${escapeHtml(SETTINGS.namaDinas)}${SETTINGS.namaKabupaten?' &mdash; '+escapeHtml(SETTINGS.namaKabupaten):''}</b>
+        <div>Laporan Kehadiran Apel Pagi &mdash; ${formatIndoDate(date)}</div>
+      </div>
+      <div class="pa-summary">Total: <b>${data.total}</b> &nbsp; Hadir: <b>${data.hadir}</b> &nbsp; Tidak Hadir: <b>${data.tidak}</b></div>
+      <table>
+        <thead><tr><th>Bidang</th><th>Jml</th><th>H.Apel</th><th>TdkKet</th><th>TnpKet</th></tr></thead>
+        <tbody>${data.bidangRows.map(r=>`<tr><td>${escapeHtml(r.bidang)}</td><td>${r.jumlah}</td><td>${r.hadirApel}</td><td>${r.tdkKet}</td><td>${r.tdkTanpaKet}</td></tr>`).join('')}</tbody>
+      </table>
+      ${worst && worst.totalTidak>0 ? `<div class="pa-worst">Tidak hadir terbanyak: ${escapeHtml(worst.bidang)} (${worst.totalTidak}/${worst.jumlah})</div>` : ''}
+      <div class="pa-note">Hadir = ${hadirNoteHtml} = ${data.hadir}<br>Tidak Hadir = ${tidakNoteHtml} = ${data.tidak}</div>
+    </div>
+  `;
+}
 async function downloadPemimpinApelPdf(){
-  const node = document.getElementById('pa-capture');
-  if(!node){ showToast('Laporan belum siap'); return; }
   if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){ showToast('Gagal memuat modul PDF. Periksa koneksi internet lalu coba lagi.'); return; }
   showToast('Menyiapkan PDF...');
   try{
-    const canvas = await html2canvas(node, { scale: 2, backgroundColor:'#ffffff', useCORS:true });
+    const cardHtml = buildPemimpinApelCardHtml(LAPORAN_DATE);
+    const holder = document.createElement('div');
+    holder.style.position = 'fixed';
+    holder.style.left = '-9999px';
+    holder.style.top = '0';
+    holder.innerHTML = `<div class="pa-page">${cardHtml}${cardHtml}${cardHtml}${cardHtml}${cardHtml}${cardHtml}</div>`;
+    document.body.appendChild(holder);
+    const pageNode = holder.querySelector('.pa-page');
+    const canvas = await html2canvas(pageNode, { scale: 2, backgroundColor:'#ffffff', useCORS:true });
+    document.body.removeChild(holder);
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit:'pt', format:'a4' });
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
-    const imgWidth = pageWidth;
-    const imgHeight = canvas.height * imgWidth / canvas.width;
     const imgData = canvas.toDataURL('image/jpeg', 0.92);
-    let heightLeft = imgHeight, position = 0;
-    pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-    heightLeft -= pageHeight;
-    while(heightLeft > 0){
-      position = heightLeft - imgHeight;
-      pdf.addPage();
-      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
-    }
+    pdf.addImage(imgData, 'JPEG', 0, 0, pageWidth, pageHeight);
     pdf.save('Laporan-PemimpinApel-'+LAPORAN_DATE+'.pdf');
   }catch(e){
     console.error(e);
