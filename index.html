@@ -2495,6 +2495,7 @@ async function renderLaporanTab(){
         <select id="laporan-type-select" onchange="LAPORAN_TYPE=this.value; renderLaporanTab();">
           <option value="kehadiran" ${LAPORAN_TYPE==='kehadiran'?'selected':''}>Rekapan Kehadiran &amp; Apel Pagi (Senin&ndash;Kamis)</option>
           <option value="jumatbersih" ${LAPORAN_TYPE==='jumatbersih'?'selected':''}>Dokumentasi Jumat Bersih (Jumat)</option>
+          <option value="pemimpinapel" ${LAPORAN_TYPE==='pemimpinapel'?'selected':''}>Laporan Pemimpin Apel ke Pembina Apel (per Bidang)</option>
           <option value="kadis" ${LAPORAN_TYPE==='kadis'?'selected':''}>Laporan Kehadiran untuk Kepala Dinas (PDF)</option>
         </select>
       </div>
@@ -2535,6 +2536,19 @@ async function renderLaporanTab(){
       <p class="muted" style="font-size:12px;margin-top:-8px;">Foto tidak disimpan permanen, hanya untuk laporan ini. Lokasi &amp; deskripsi default bisa diatur di menu <b>Pengaturan</b>.</p>
       <div class="jb-wrap"><div id="report-jb"></div></div>
     </div>
+    ` : LAPORAN_TYPE==='pemimpinapel' ? `
+    <div class="card" style="margin-bottom:16px;">
+      <div class="section-title">&#128227; Laporan Teks (untuk dibacakan / disalin ke WhatsApp)</div>
+      <div class="toolbar">
+        <button class="btn btn-primary" onclick="copyPemimpinApelText()">&#128203; Salin ke Clipboard</button>
+      </div>
+      <div id="pa-text-preview" style="background:#FAFBFD;border:1px solid var(--border);border-radius:8px;padding:18px;white-space:pre-wrap;font-family:'Space Grotesk',monospace;font-size:13px;line-height:1.7;"></div>
+    </div>
+    <div class="card">
+      <div class="section-title">&#128196; Laporan Tertulis untuk Pembina Apel</div>
+      <button class="btn btn-primary" style="margin-bottom:14px;" onclick="downloadPemimpinApelPdf()">&#8681; Unduh PDF</button>
+      <div class="kd-wrap"><div id="report-pa"></div></div>
+    </div>
     ` : `
     <div class="card" style="margin-bottom:16px;">
       <div class="section-title">Periode Laporan</div>
@@ -2567,6 +2581,9 @@ async function renderLaporanTab(){
     renderVisualReport();
   } else if(LAPORAN_TYPE==='jumatbersih'){
     renderVisualReportJB();
+  } else if(LAPORAN_TYPE==='pemimpinapel'){
+    await ensureAttendanceLoaded(LAPORAN_DATE);
+    renderPemimpinApelReport();
   } else {
     await renderKadisReportPreview();
   }
@@ -2750,6 +2767,109 @@ function printReport(){
   const area = document.getElementById('print-area');
   area.innerHTML = '<pre style="font-family:Space Grotesk,monospace;font-size:13px;white-space:pre-wrap;">'+escapeHtml(text)+'</pre>';
   window.print();
+}
+
+/* ================= LAPORAN PEMIMPIN APEL (per Bidang) ================= */
+const TIDAK_HADIR_KET_STATUSES = ['Tugas Belajar','Latsar CPNS','Tugas Luar Daerah','WFA','Terlambat','Izin Terlambat','Cuti','Sakit','Izin Tidak Masuk'];
+function computePemimpinApelData(date){
+  const { hadir, tidak, total } = dayCounts(date);
+  const bidangRows = uniqueBidang().map(b=>{
+    const list = activeEmployees().filter(e=>e.bidang===b);
+    let hadirApel=0, tdkKet=0, tdkTanpaKet=0;
+    list.forEach(e=>{
+      const st = getAttendance(date, e.id).status;
+      if(st==='Hadir Apel Pagi') hadirApel++;
+      else if(TIDAK_HADIR_KET_STATUSES.indexOf(st)>=0) tdkKet++;
+      else if(st==='Tanpa Keterangan') tdkTanpaKet++;
+    });
+    return { bidang:b, jumlah:list.length, hadirApel, tdkKet, tdkTanpaKet, totalTidak: tdkKet+tdkTanpaKet };
+  });
+  return { hadir, tidak, total, bidangRows };
+}
+function buildPemimpinApelText(date){
+  const data = computePemimpinApelData(date);
+  let out = '';
+  out += 'LAPORAN KEHADIRAN APEL PAGI\n';
+  out += 'Kepada Yth. Pembina Apel\n';
+  out += SETTINGS.namaDinas + (SETTINGS.namaKabupaten ? '\n'+SETTINGS.namaKabupaten : '') + '\n';
+  out += formatIndoDate(date) + '\n\n';
+  out += 'Total Pegawai : '+data.total+' Orang\n';
+  out += 'Hadir         : '+data.hadir+' Orang\n';
+  out += 'Tidak Hadir   : '+data.tidak+' Orang\n\n';
+  out += 'REKAP PER BIDANG/BAGIAN\n';
+  data.bidangRows.forEach(r=>{
+    out += '- '+r.bidang+' ('+r.jumlah+' pegawai): Hadir Apel Pagi '+r.hadirApel+', Tidak Hadir dengan Keterangan '+r.tdkKet+', Tanpa Keterangan '+r.tdkTanpaKet+'\n';
+  });
+  const worst = [...data.bidangRows].sort((a,b)=>b.totalTidak-a.totalTidak)[0];
+  if(worst && worst.totalTidak>0){
+    out += '\nBidang dengan jumlah tidak hadir terbanyak hari ini: '+worst.bidang+' ('+worst.totalTidak+' dari '+worst.jumlah+' pegawai).\n';
+  }
+  return out;
+}
+async function copyPemimpinApelText(){
+  const text = buildPemimpinApelText(LAPORAN_DATE);
+  try{ await navigator.clipboard.writeText(text); showToast('Laporan disalin ke clipboard'); }
+  catch(e){ showToast('Gagal menyalin otomatis, silakan salin manual dari kotak teks'); }
+}
+function renderPemimpinApelReport(){
+  const textEl = document.getElementById('pa-text-preview');
+  if(textEl) textEl.textContent = buildPemimpinApelText(LAPORAN_DATE);
+  const el = document.getElementById('report-pa');
+  if(!el) return;
+  const data = computePemimpinApelData(LAPORAN_DATE);
+  const worst = [...data.bidangRows].sort((a,b)=>b.totalTidak-a.totalTidak)[0];
+  el.innerHTML = `
+    <div class="report-kd" id="pa-capture">
+      <div class="kd-head">
+        ${SETTINGS.logoDataUrl ? `<img src="${SETTINGS.logoDataUrl}">` : ''}
+        <h1>Laporan Kehadiran Apel Pagi</h1>
+        <div class="sub">Kepada Yth. Pembina Apel &mdash; ${escapeHtml(SETTINGS.namaDinas)}${SETTINGS.namaKabupaten?' &mdash; '+escapeHtml(SETTINGS.namaKabupaten):''}</div>
+        <div class="sub">${formatIndoDate(LAPORAN_DATE)}</div>
+      </div>
+      <div class="kd-section">
+        <h3>Ringkasan Umum</h3>
+        <p style="font-size:12px;">Total Pegawai: <b>${data.total}</b> &middot; Hadir: <b style="color:var(--teal);">${data.hadir}</b> &middot; Tidak Hadir: <b style="color:var(--red);">${data.tidak}</b></p>
+      </div>
+      <div class="kd-section">
+        <h3>Rekapan Kehadiran per Bidang</h3>
+        <table class="kd-table">
+          <thead><tr><th>Bidang</th><th>Jumlah Pegawai</th><th>Hadir Apel Pagi</th><th>Tidak Hadir dengan Keterangan</th><th>Tidak Hadir Tanpa Keterangan</th></tr></thead>
+          <tbody>${data.bidangRows.map(r=>`<tr><td>${escapeHtml(r.bidang)}</td><td>${r.jumlah}</td><td>${r.hadirApel}</td><td>${r.tdkKet}</td><td>${r.tdkTanpaKet}</td></tr>`).join('')}</tbody>
+        </table>
+        ${worst && worst.totalTidak>0 ? `<div class="kd-highlight">Bidang dengan jumlah tidak hadir terbanyak hari ini: ${escapeHtml(worst.bidang)} (${worst.totalTidak} dari ${worst.jumlah} pegawai).</div>` : ''}
+      </div>
+      <p class="kd-note">Dibuat otomatis oleh SIMPEG PUPR pada ${formatIndoDate(todayStr())}.</p>
+    </div>
+  `;
+}
+async function downloadPemimpinApelPdf(){
+  const node = document.getElementById('pa-capture');
+  if(!node){ showToast('Laporan belum siap'); return; }
+  if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){ showToast('Gagal memuat modul PDF. Periksa koneksi internet lalu coba lagi.'); return; }
+  showToast('Menyiapkan PDF...');
+  try{
+    const canvas = await html2canvas(node, { scale: 2, backgroundColor:'#ffffff', useCORS:true });
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit:'pt', format:'a4' });
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const imgWidth = pageWidth;
+    const imgHeight = canvas.height * imgWidth / canvas.width;
+    const imgData = canvas.toDataURL('image/jpeg', 0.92);
+    let heightLeft = imgHeight, position = 0;
+    pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+    heightLeft -= pageHeight;
+    while(heightLeft > 0){
+      position = heightLeft - imgHeight;
+      pdf.addPage();
+      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+    }
+    pdf.save('Laporan-PemimpinApel-'+LAPORAN_DATE+'.pdf');
+  }catch(e){
+    console.error(e);
+    showToast('Gagal membuat PDF laporan.');
+  }
 }
 
 /* ================= LAPORAN KEPALA DINAS (PDF) ================= */
