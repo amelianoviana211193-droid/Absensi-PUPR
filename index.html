@@ -1739,6 +1739,7 @@ function computeDisiplinData(dates){
 
   const violationBreakdown = {};
   APEL_VIOLATION.forEach(s=>{ violationBreakdown[s] = perEmployee.reduce((sum,p)=>sum+p.counts[s],0); });
+  const hadirApelTotal = perEmployee.reduce((sum,p)=>sum+(p.counts['Hadir Apel Pagi']||0),0);
 
   function groupBy(keyFn){
     const g = {};
@@ -1753,7 +1754,7 @@ function computeDisiplinData(dates){
   const bidangStats = groupBy(e=>e.bidang);
   const kepegStats = groupBy(e=>e.statusKepegawaian);
 
-  return { employees, perEmployee, dailyAgg, violationBreakdown, bidangStats, kepegStats, totalHari: dates.length };
+  return { employees, perEmployee, dailyAgg, violationBreakdown, hadirApelTotal, bidangStats, kepegStats, totalHari: dates.length };
 }
 
 async function renderDisiplinTab(){
@@ -1819,6 +1820,40 @@ async function renderDisiplinTab(){
       <div class="card stat-card"><div class="top"><span class="lbl">Hari Terekam (${escapeHtml(periodLabel)})</span><span class="emoji">&#128197;</span></div><div class="val">${data.totalHari}</div></div>
       <div class="card stat-card"><div class="top"><span class="lbl">Total Ketidakikutan Apel</span><span class="emoji">&#9888;</span></div><div class="val" style="color:var(--red);">${totalViolationAll}</div></div>
       <div class="card stat-card"><div class="top"><span class="lbl">Rata-rata / Pegawai</span><span class="emoji">&#128200;</span></div><div class="val">${avgViolation}</div></div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="toolbar" style="margin-bottom:4px;">
+        <div class="section-title" style="margin:0;">&#128202; Rata-rata Progress Kehadiran per Kategori</div>
+        <div class="spacer"></div>
+        <button class="btn btn-outline btn-sm" onclick="downloadDisiplinProgressImage()">&#8681; Unduh Gambar (PNG)</button>
+      </div>
+      <p class="muted" style="font-size:12px;margin:0 0 10px;">Persentase rata-rata dari seluruh hari-pegawai pada periode ${escapeHtml(periodLabel)} (${data.employees.length} pegawai &times; ${data.totalHari} hari kerja).</p>
+      <div id="disiplin-progress-capture" style="background:#fff;padding:6px;">
+        ${(()=>{
+          const totalSlots = data.employees.length * data.totalHari;
+          const progressCats = [
+            { label:'Hadir Apel Pagi', total:data.hadirApelTotal, color:'var(--teal)' },
+            { label:'Terlambat', total:data.violationBreakdown['Terlambat'], color:'var(--amber)' },
+            { label:'Izin Terlambat', total:data.violationBreakdown['Izin Terlambat'], color:'var(--amber)' },
+            { label:'Izin Tidak Masuk', total:data.violationBreakdown['Izin Tidak Masuk'], color:'var(--red)' },
+            { label:'Tanpa Keterangan', total:data.violationBreakdown['Tanpa Keterangan'], color:'var(--grey)' },
+          ];
+          return progressCats.map(c=>{
+            const pct = totalSlots ? Math.round((c.total/totalSlots)*100) : 0;
+            return `<div style="margin-bottom:14px;">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;">
+                <span style="font-weight:700;font-size:13px;color:var(--navy);">${escapeHtml(c.label)}</span>
+                <span style="font-family:'Space Grotesk';font-weight:700;font-size:20px;color:${c.color};">${pct}%</span>
+              </div>
+              <div style="background:var(--grey-pale);border-radius:8px;height:16px;overflow:hidden;">
+                <div style="width:${pct}%;height:100%;background:${c.color};border-radius:8px;"></div>
+              </div>
+              <div class="muted" style="font-size:11px;margin-top:3px;">${c.total} dari ${totalSlots} hari-pegawai</div>
+            </div>`;
+          }).join('');
+        })()}
+      </div>
     </div>
 
     <div class="card" style="margin-bottom:16px;">
@@ -2717,6 +2752,10 @@ function renderVisualReport(){
       <div class="rv-footer">${escapeHtml(SETTINGS.motto || '')}</div>
     </div>
   `;
+}
+function downloadDisiplinProgressImage(){
+  const label = DISIPLIN_MODE==='bulanan' ? DISIPLIN_MONTH : (DISIPLIN_START+'_sd_'+DISIPLIN_END);
+  downloadVisualReport('disiplin-progress-capture', 'Progress-Kehadiran-'+label+'.png');
 }
 async function downloadVisualReport(captureId, filename){
   captureId = captureId || 'rv-capture';
