@@ -381,6 +381,7 @@ const STATUS_META = {
   'Tanpa Keterangan':{emoji:'&#10060;', cat:'tidak', badge:'badge-grey'},
 };
 const STATUS_KEPEG = ['PNS','CPNS','PPPK','PPPK Paruh Waktu','Tenaga Kontrak Daerah'];
+const PENDIDIKAN_OPTIONS = ['SD','SMP','SMA/SMK','D1','D2','D3','D4','S1','S2','S3'];
 const APEL_VIOLATION = ['Terlambat','Izin Terlambat','Izin Tidak Masuk','Tanpa Keterangan'];
 function isApelViolation(status){ return APEL_VIOLATION.indexOf(status)>=0; }
 const HARI_ID = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
@@ -1514,7 +1515,7 @@ function renderPegawaiWrap(){
   wrap.innerHTML = `
     <div class="table-wrap">
     <table>
-      <thead><tr><th>NIP</th><th>Nama</th><th>Pangkat/Gol</th><th>Jabatan</th><th>Bidang</th><th>Status Kepeg.</th><th>Aktif</th><th></th></tr></thead>
+      <thead><tr><th>NIP</th><th>Nama</th><th>Pangkat/Gol</th><th>Jabatan</th><th>Bidang</th><th>Status Kepeg.</th><th>Pendidikan</th><th>Nama Sekolah</th><th>Aktif</th><th></th></tr></thead>
       <tbody>
         ${list.map(e=>`<tr>
           <td class="muted">${escapeHtml(e.nip||'-')}</td>
@@ -1523,6 +1524,8 @@ function renderPegawaiWrap(){
           <td>${escapeHtml(e.jabatan||'-')}</td>
           <td>${escapeHtml(e.bidang||'-')}</td>
           <td><span class="badge badge-grey">${escapeHtml(e.statusKepegawaian||'-')}</span></td>
+          <td>${escapeHtml(e.pendidikanTerakhir||'-')}</td>
+          <td>${escapeHtml(e.namaSekolah||'-')}</td>
           <td>${e.statusAktif==='Aktif' ? '<span class="badge badge-hadir">Aktif</span>' : '<span class="badge badge-tidak">Nonaktif</span>'}</td>
           <td style="white-space:nowrap;">
             <button class="btn btn-outline btn-sm" onclick="openEmployeeModal('${e.id}')">Edit</button>
@@ -1536,7 +1539,7 @@ function renderPegawaiWrap(){
   `;
 }
 function openEmployeeModal(id){
-  const emp = id ? EMPLOYEES.find(e=>e.id===id) : { id:null, nip:'', nama:'', pangkat:'', jabatan:'', bidang:'', statusKepegawaian:'PNS', statusAktif:'Aktif' };
+  const emp = id ? EMPLOYEES.find(e=>e.id===id) : { id:null, nip:'', nama:'', pangkat:'', jabatan:'', bidang:'', statusKepegawaian:'PNS', statusAktif:'Aktif', pendidikanTerakhir:'', namaSekolah:'' };
   const root = document.getElementById('modal-root');
   root.innerHTML = `
     <div class="modal-bg" onclick="if(event.target===this) closeModal()">
@@ -1554,6 +1557,10 @@ function openEmployeeModal(id){
           <div class="field"><label>Status Aktif</label>
             <select id="f-statusaktif"><option ${emp.statusAktif==='Aktif'?'selected':''}>Aktif</option><option ${emp.statusAktif==='Nonaktif'?'selected':''}>Nonaktif</option></select>
           </div>
+          <div class="field"><label>Pendidikan Terakhir</label>
+            <select id="f-pendidikan"><option value="">-</option>${PENDIDIKAN_OPTIONS.map(p=>`<option ${emp.pendidikanTerakhir===p?'selected':''}>${p}</option>`).join('')}</select>
+          </div>
+          <div class="field"><label>Nama Sekolah</label><input id="f-sekolah" type="text" value="${escapeHtml(emp.namaSekolah)}"></div>
         </div>
         <div class="actions">
           <button class="btn btn-outline" onclick="closeModal()">Batal</button>
@@ -1576,6 +1583,8 @@ async function saveEmployeeForm(id){
     bidang: document.getElementById('f-bidang').value.trim(),
     statusKepegawaian: document.getElementById('f-statuskepeg').value,
     statusAktif: document.getElementById('f-statusaktif').value,
+    pendidikanTerakhir: document.getElementById('f-pendidikan').value,
+    namaSekolah: document.getElementById('f-sekolah').value.trim(),
   };
   const saved = await upsertPegawaiRemote(data);
   if(!saved) return;
@@ -1610,7 +1619,7 @@ function openImportModal(){
     <div class="modal-bg" onclick="if(event.target===this) closeModal()">
       <div class="modal" style="max-width:640px;">
         <h3>Impor Data Pegawai</h3>
-        <p class="muted" style="margin-top:-8px;">Salin (copy) kolom dari Excel lalu tempel (paste) di bawah ini. Urutan kolom: <b>NIP, Nama, Pangkat/Gol, Jabatan, Bidang, Status Kepegawaian</b>. Satu baris = satu pegawai.</p>
+        <p class="muted" style="margin-top:-8px;">Salin (copy) kolom dari Excel lalu tempel (paste) di bawah ini. Urutan kolom: <b>NIP, Nama, Pangkat/Gol, Jabatan, Bidang, Status Kepegawaian, Pendidikan Terakhir, Nama Sekolah</b>. Dua kolom terakhir boleh dikosongkan. Satu baris = satu pegawai.</p>
         <textarea id="import-text" rows="10" style="width:100%;" placeholder="197001012000011001&#9;Contoh Nama&#9;Penata Muda/IIIa&#9;Kasubag Umum&#9;Sekretariat&#9;PNS"></textarea>
         <div class="actions">
           <button class="btn btn-outline" onclick="closeModal()">Batal</button>
@@ -1627,12 +1636,14 @@ async function doImport(){
   const toAdd = [];
   lines.forEach(line=>{
     const cols = line.split('\t').length>1 ? line.split('\t') : line.split(';');
-    const [nip, nama, pangkat, jabatan, bidang, statusKepegawaian] = cols.map(c=>(c||'').trim());
+    const [nip, nama, pangkat, jabatan, bidang, statusKepegawaian, pendidikanTerakhir, namaSekolah] = cols.map(c=>(c||'').trim());
     if(!nama) return;
     toAdd.push({
       nip: nip||'', nama, pangkat: pangkat||'', jabatan: jabatan||'', bidang: bidang||'',
       statusKepegawaian: STATUS_KEPEG.includes(statusKepegawaian) ? statusKepegawaian : 'PNS',
       statusAktif: 'Aktif',
+      pendidikanTerakhir: PENDIDIKAN_OPTIONS.includes(pendidikanTerakhir) ? pendidikanTerakhir : '',
+      namaSekolah: namaSekolah||'',
     });
   });
   if(toAdd.length===0){ showToast('Tidak ada baris valid untuk diimpor'); return; }
@@ -1645,8 +1656,8 @@ async function doImport(){
   showToast(saved.length+' pegawai berhasil diimpor');
 }
 function exportCsv(){
-  const header = ['NIP','Nama','Pangkat/Gol','Jabatan','Bidang','Status Kepegawaian','Status Aktif'];
-  const rows = EMPLOYEES.map(e=>[e.nip,e.nama,e.pangkat,e.jabatan,e.bidang,e.statusKepegawaian,e.statusAktif]);
+  const header = ['NIP','Nama','Pangkat/Gol','Jabatan','Bidang','Status Kepegawaian','Status Aktif','Pendidikan Terakhir','Nama Sekolah'];
+  const rows = EMPLOYEES.map(e=>[e.nip,e.nama,e.pangkat,e.jabatan,e.bidang,e.statusKepegawaian,e.statusAktif,e.pendidikanTerakhir,e.namaSekolah]);
   const csv = [header, ...rows].map(r=>r.map(v=>'"'+String(v||'').replace(/"/g,'""')+'"').join(',')).join('\n');
   const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
   const url = URL.createObjectURL(blob);
@@ -1828,7 +1839,12 @@ async function renderDisiplinTab(){
         <div class="spacer"></div>
         <button class="btn btn-outline btn-sm" onclick="downloadDisiplinProgressImage()">&#8681; Unduh Gambar (PNG)</button>
       </div>
-      <p class="muted" style="font-size:12px;margin:0 0 10px;">Persentase rata-rata dari seluruh hari-pegawai pada periode ${escapeHtml(periodLabel)} (${data.employees.length} pegawai &times; ${data.totalHari} hari kerja).</p>
+      <p class="muted" style="font-size:12px;margin:0 0 10px;line-height:1.7;">
+        Periode: <b>${escapeHtml(periodLabel)}</b><br>
+        Jumlah hari kerja terekam: <b>${data.totalHari} hari</b> (Sabtu, Minggu &amp; hari libur nasional tidak dihitung)<br>
+        Jumlah pegawai aktif: <b>${data.employees.length} orang</b><br>
+        Total dasar perhitungan: <b>${data.employees.length} pegawai &times; ${data.totalHari} hari kerja = ${data.employees.length*data.totalHari} hari-pegawai</b>
+      </p>
       <div id="disiplin-progress-capture" style="background:#fff;padding:6px;">
         ${(()=>{
           const totalSlots = data.employees.length * data.totalHari;
