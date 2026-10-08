@@ -415,6 +415,8 @@ let DISIPLIN_START = todayStr().slice(0,8)+'01';
 let DISIPLIN_END = todayStr();
 let DISIPLIN_LAST_DATES = [];
 let DISIPLIN_FILTER = { bidang:'', statusKepeg:'' };
+let DISIPLIN_SEARCH = '';
+let DISIPLIN_LAST_DATA = null;
 let DISIPLIN_LOADING = false;
 let TEGURAN_WEEK = mondayOf(todayStr());
 let TEGURAN_THRESHOLD = 3;
@@ -1797,6 +1799,7 @@ async function renderDisiplinTab(){
           <option value="">Semua Status Kepegawaian</option>
           ${STATUS_KEPEG.map(s=>`<option value="${s}" ${DISIPLIN_FILTER.statusKepeg===s?'selected':''}>${s}</option>`).join('')}
         </select>
+        <input type="search" placeholder="Cari nama pegawai..." value="${escapeHtml(DISIPLIN_SEARCH)}" oninput="DISIPLIN_SEARCH=this.value; renderDisiplinTableBody();" style="min-width:200px;">
       </div>
     </div>
     <div id="disiplin-body"><div class="card empty-state">Memuat data...</div></div>
@@ -1818,6 +1821,7 @@ async function renderDisiplinTab(){
     return;
   }
   const data = computeDisiplinData(dates);
+  DISIPLIN_LAST_DATA = data;
   const totalViolationAll = data.perEmployee.reduce((s,p)=>s+p.totalViolation,0);
   const avgViolation = data.perEmployee.length ? (totalViolationAll/data.perEmployee.length).toFixed(1) : 0;
   const maxDay = Math.max(1, data.employees.length);
@@ -1927,31 +1931,8 @@ async function renderDisiplinTab(){
     </div>
 
     <div class="card">
-      <div class="section-title">Rekap Disiplin per Pegawai (${data.perEmployee.length} pegawai, diurutkan dari paling sering tidak ikut apel)</div>
-      <div class="table-wrap">
-      <table>
-        <thead><tr>
-          <th>Nama</th><th>Bidang</th><th>Status Kepeg.</th>
-          <th>Terlambat</th><th>Izin Terlambat</th><th>Izin Tidak Masuk</th><th>Tanpa Ket.</th>
-          <th>Total Tidak Ikut Apel</th><th>Hadir Apel Pagi</th><th>% Disiplin</th>
-        </tr></thead>
-        <tbody>
-          ${data.perEmployee.map(p=>`<tr class="disiplin-row" onclick="openDisiplinDetail('${p.emp.id}')">
-            <td>${escapeHtml(p.emp.nama)}</td>
-            <td>${escapeHtml(p.emp.bidang)}</td>
-            <td><span class="badge badge-grey">${escapeHtml(p.emp.statusKepegawaian)}</span></td>
-            <td>${p.counts['Terlambat']}</td>
-            <td>${p.counts['Izin Terlambat']}</td>
-            <td>${p.counts['Izin Tidak Masuk']}</td>
-            <td>${p.counts['Tanpa Keterangan']}</td>
-            <td><b style="color:${p.totalViolation>0?'var(--red)':'var(--teal)'};">${p.totalViolation}</b></td>
-            <td>${p.totalHadirApel}</td>
-            <td>${p.pctDisiplin}%</td>
-          </tr>`).join('')}
-        </tbody>
-      </table>
-      </div>
-      <div class="muted" style="margin-top:8px;font-size:12px;">Klik baris untuk melihat rincian kehadiran pegawai tersebut pada periode ini.</div>
+      <div class="section-title">Rekap Disiplin per Pegawai</div>
+      <div id="disiplin-table-wrap"></div>
     </div>
 
     <div class="card" style="margin-top:16px;">
@@ -1965,7 +1946,40 @@ async function renderDisiplinTab(){
       <div id="teguran-section"><div class="muted">Memuat...</div></div>
     </div>
   `;
+  renderDisiplinTableBody();
   await renderTeguranSection();
+}
+function renderDisiplinTableBody(){
+  const el = document.getElementById('disiplin-table-wrap');
+  if(!el || !DISIPLIN_LAST_DATA) return;
+  const s = DISIPLIN_SEARCH.trim().toLowerCase();
+  const list = s ? DISIPLIN_LAST_DATA.perEmployee.filter(p=>p.emp.nama.toLowerCase().includes(s)) : DISIPLIN_LAST_DATA.perEmployee;
+  el.innerHTML = `
+    <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Nama</th><th>Bidang</th><th>Status Kepeg.</th>
+        <th>Terlambat</th><th>Izin Terlambat</th><th>Izin Tidak Masuk</th><th>Tanpa Ket.</th>
+        <th>Total Tidak Ikut Apel</th><th>Hadir Apel Pagi</th><th>% Disiplin</th>
+      </tr></thead>
+      <tbody>
+        ${list.length===0 ? `<tr><td colspan="10" class="muted" style="text-align:center;padding:16px;">Tidak ada pegawai dengan nama tersebut.</td></tr>` : list.map(p=>`<tr class="disiplin-row" onclick="openDisiplinDetail('${p.emp.id}')">
+          <td>${escapeHtml(p.emp.nama)}</td>
+          <td>${escapeHtml(p.emp.bidang)}</td>
+          <td><span class="badge badge-grey">${escapeHtml(p.emp.statusKepegawaian)}</span></td>
+          <td>${p.counts['Terlambat']}</td>
+          <td>${p.counts['Izin Terlambat']}</td>
+          <td>${p.counts['Izin Tidak Masuk']}</td>
+          <td>${p.counts['Tanpa Keterangan']}</td>
+          <td><b style="color:${p.totalViolation>0?'var(--red)':'var(--teal)'};">${p.totalViolation}</b></td>
+          <td>${p.totalHadirApel}</td>
+          <td>${p.pctDisiplin}%</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+    </div>
+    <div class="muted" style="margin-top:8px;font-size:12px;">Menampilkan ${list.length} dari ${DISIPLIN_LAST_DATA.perEmployee.length} pegawai, diurutkan dari paling sering tidak ikut apel. Klik baris untuk melihat rincian kehadiran pegawai tersebut pada periode ini.</div>
+  `;
 }
 async function renderTeguranSection(){
   const el = document.getElementById('teguran-section');
@@ -2154,6 +2168,20 @@ async function openDisiplinDetail(empId){
           <div class="card stat-card" style="padding:10px;"><div class="lbl">Hadir Apel Pagi</div><div class="val" style="font-size:20px;color:var(--teal);">${counts['Hadir Apel Pagi']}</div></div>
           <div class="card stat-card" style="padding:10px;"><div class="lbl">Tidak Ikut Apel</div><div class="val" style="font-size:20px;color:var(--red);">${totalViolation}</div></div>
           <div class="card stat-card" style="padding:10px;"><div class="lbl">Hari Terekam</div><div class="val" style="font-size:20px;">${dates.length}</div></div>
+        </div>
+        <div class="section-title" style="font-size:13px;">Rincian per Kategori</div>
+        <div class="table-wrap" style="max-height:220px;margin-bottom:14px;">
+          <table>
+            <thead><tr><th>Kategori</th><th>Jumlah</th><th>%</th></tr></thead>
+            <tbody>
+              ${STATUS_ALL.map(s=>{
+                const n = counts[s]||0;
+                const pct = dates.length ? Math.round((n/dates.length)*100) : 0;
+                const meta = STATUS_META[s];
+                return `<tr><td>${meta.emoji} ${s}</td><td>${n}</td><td>${pct}%</td></tr>`;
+              }).join('')}
+            </tbody>
+          </table>
         </div>
         ${bodyHtml}
         ${DISIPLIN_MODE==='bulanan' ? `<div class="legend-row" style="margin-top:12px;">
