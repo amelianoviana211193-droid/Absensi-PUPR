@@ -475,7 +475,7 @@ let AUTH_ROLE = localStorage.getItem('simpeg_role') || null;
 let AUTH_BIDANG = localStorage.getItem('simpeg_bidang') || null;
 let BIDANG_PASSWORDS = {};
 let HOLIDAYS = {}; // { 'YYYY-MM-DD': 'keterangan' }
-const USER_ALLOWED_TABS = ['dashboard','kehadiran','wajah'];
+const USER_ALLOWED_TABS = ['dashboard','kehadiran','disiplin','wajah'];
 function visibleTabs(){ return AUTH_ROLE==='user' ? TABS.filter(t=>USER_ALLOWED_TABS.indexOf(t.id)>=0) : TABS; }
 
 /* ================= UTILS ================= */
@@ -1935,7 +1935,7 @@ async function renderDisiplinTab(){
       <div id="disiplin-table-wrap"></div>
     </div>
 
-    <div class="card" style="margin-top:16px;">
+    ${AUTH_ROLE!=='user' ? `<div class="card" style="margin-top:16px;">
       <div class="section-title">&#9888; Peringatan Disiplin Mingguan (Surat Teguran)</div>
       <div class="toolbar">
         <label style="margin:0;">Minggu</label>
@@ -1944,10 +1944,10 @@ async function renderDisiplinTab(){
         <input type="number" min="1" max="5" value="${TEGURAN_THRESHOLD}" style="width:60px;" onchange="TEGURAN_THRESHOLD=parseInt(this.value)||3; renderTeguranSection();">
       </div>
       <div id="teguran-section"><div class="muted">Memuat...</div></div>
-    </div>
+    </div>` : ''}
   `;
   renderDisiplinTableBody();
-  await renderTeguranSection();
+  if(AUTH_ROLE!=='user') await renderTeguranSection();
 }
 function renderDisiplinTableBody(){
   const el = document.getElementById('disiplin-table-wrap');
@@ -2016,6 +2016,7 @@ async function renderTeguranSection(){
   `;
 }
 function openTeguranModal(empId){
+  if(AUTH_ROLE==='user') return;
   const item = TEGURAN_DATA && TEGURAN_DATA.flagged.find(f=>f.emp.id===empId);
   if(!item) return;
   TEGURAN_NOMOR_SURAT = TEGURAN_NOMOR_SURAT || '800/ /'+SETTINGS.namaDinas.split(' ').map(w=>w[0]).join('').toUpperCase()+'/'+new Date().getFullYear();
